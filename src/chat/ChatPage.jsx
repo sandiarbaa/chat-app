@@ -9,6 +9,7 @@ import { Avatar } from '../components/Avatar'
 import { formatTime, formatDateDivider, truncate } from '../utils/time'
 
 const ROOMS = ['general', 'random', 'dev', 'design']
+const PAGE_SIZE = 50
 
 // ─── Small presentational helpers ────────────────────────────────────────────
 function ThemeToggleContent({ dark }) {
@@ -391,8 +392,11 @@ export default function ChatPage({ session, dark, setDark, t }) {
   const [unreadCounts, setUnreadCounts] = useState({})
   const [replyTo, setReplyTo] = useState(null)
   const [onlineUsers, setOnlineUsers] = useState([])
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   const bottomRef = useRef(null)
+  const topSentinelRef = useRef(null)
   const scrollContainerRef = useRef(null)
   const channelRef = useRef(null)
   const typingTimeoutRef = useRef(null)
@@ -408,6 +412,47 @@ export default function ChatPage({ session, dark, setDark, t }) {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
+  // Load older messages when scrolled near top
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || messages.length === 0) return
+    const oldest = messages[0]
+    if (!oldest) return
+
+    setLoadingMore(true)
+    const el = scrollContainerRef.current
+    const prevScrollHeight = el ? el.scrollHeight : 0
+
+    const { data } = await supabase
+      .from('messages').select('*').eq('room', room)
+      .lt('created_at', oldest.created_at)
+      .order('created_at', { ascending: false }).limit(PAGE_SIZE)
+
+    if (data && data.length > 0) {
+      const older = data.reverse()
+      setMessages(prev => [...older, ...prev])
+      setHasMore(data.length === PAGE_SIZE)
+      // Restore scroll position so view doesn't jump
+      requestAnimationFrame(() => {
+        if (el) el.scrollTop = el.scrollHeight - prevScrollHeight
+      })
+    } else {
+      setHasMore(false)
+    }
+    setLoadingMore(false)
+  }, [loadingMore, hasMore, messages, room])
+
+  // Trigger loadMore when top sentinel comes into view
+  useEffect(() => {
+    const sentinel = topSentinelRef.current
+    if (!sentinel) return
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) loadMore() },
+      { root: scrollContainerRef.current, threshold: 0.1 }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [loadMore])
+
   // Scroll tracking
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current
@@ -417,19 +462,24 @@ export default function ChatPage({ session, dark, setDark, t }) {
     setShowScrollBtn(!isAtBottomRef.current)
   }, [])
 
+
   // Load messages + realtime + presence
   useEffect(() => {
     setMessages([])
     setTypingUsers([])
     setReplyTo(null)
     setOnlineUsers([])
+    setHasMore(false)
+    setLoadingMore(false)
 
     const loadMessages = async () => {
       const { data } = await supabase
         .from('messages').select('*').eq('room', room)
-        .order('created_at', { ascending: true }).limit(50)
+        .order('created_at', { ascending: false }).limit(PAGE_SIZE)
       if (data) {
-        setMessages(data)
+        const sorted = data.reverse()
+        setMessages(sorted)
+        setHasMore(data.length === PAGE_SIZE)
         setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'instant' }), 50)
       }
     }
@@ -641,7 +691,39 @@ export default function ChatPage({ session, dark, setDark, t }) {
           onScroll={handleScroll}
           style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px' : '16px 20px', display: 'flex', flexDirection: 'column', gap: 2, position: 'relative' }}
         >
-          {messages.length === 0 && (
+          {/* Top sentinel — IntersectionObserver triggers loadMore when visible */}
+          <div ref={topSentinelRef} style={{ height: 1 }} />
+
+          {/* Load more indicator */}
+          {loadingMore && (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0' }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                fontSize: 12, color: t.textFaint,
+                background: t.input, borderRadius: 20, padding: '6px 14px',
+              }}>
+                <span style={{ display: 'flex', gap: 3 }}>
+                  {[0,1,2].map(i => (
+                    <span key={i} style={{ width: 4, height: 4, borderRadius: '50%', background: t.textFaint, display: 'inline-block', animation: 'bounce 1s infinite', animationDelay: `${i * 0.2}s` }} />
+                  ))}
+                </span>
+                Loading older messages...
+              </div>
+            </div>
+          )}
+
+          {/* Start of history indicator */}
+          {!hasMore && messages.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0 16px' }}>
+              <div style={{ flex: 1, height: 1, background: t.border }} />
+              <span style={{ fontSize: 11, color: t.textFaint, whiteSpace: 'nowrap', padding: '2px 10px', border: `1px solid ${t.border}`, borderRadius: 10 }}>
+                Beginning of #{room}
+              </span>
+              <div style={{ flex: 1, height: 1, background: t.border }} />
+            </div>
+          )}
+
+          {messages.length === 0 && !loadingMore && (
             <div style={{ color: t.textFaint, fontSize: 14, textAlign: 'center', marginTop: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
               Belum ada pesan di #{room} <FiSmile aria-hidden="true" />
             </div>
