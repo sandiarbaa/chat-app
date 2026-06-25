@@ -140,9 +140,7 @@ function ChatPage({ session, dark, setDark, t }) {
     }
     loadMessages()
 
-    const channel = supabase.channel(`room:${room}`, {
-      config: { presence: { key: username } }
-    })
+    const channel = supabase.channel(`room:${room}`)
 
     channel
       .on('postgres_changes',
@@ -174,10 +172,10 @@ function ChatPage({ session, dark, setDark, t }) {
   const handleInputChange = (e) => {
     setInput(e.target.value)
     if (!channelRef.current) return
-    channelRef.current.track({ isTyping: true })
+    channelRef.current.track({ username, isTyping: true })
     clearTimeout(typingTimeoutRef.current)
     typingTimeoutRef.current = setTimeout(() => {
-      channelRef.current?.track({ isTyping: false })
+      channelRef.current?.track({ username, isTyping: false })
     }, 1500)
   }
 
@@ -186,7 +184,7 @@ function ChatPage({ session, dark, setDark, t }) {
     const content = input.trim()
     setInput('')
     clearTimeout(typingTimeoutRef.current)
-    channelRef.current?.track({ isTyping: false })
+    channelRef.current?.track({ username, isTyping: false })
     const optimistic = {
       id: Date.now(),
       username,
