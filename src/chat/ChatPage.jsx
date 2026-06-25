@@ -10,6 +10,7 @@ import { formatTime, formatDateDivider, truncate } from '../utils/time'
 
 const ROOMS = ['general', 'random', 'dev', 'design']
 const PAGE_SIZE = 50
+const EMOJI_LIST = ['👍', '❤️', '😂', '😮', '😢', '😡', '😍', '🤔', '🔥', '👏', '🎉', '💯', '🙏', '💀', '🤣', '😭', '😤', '🥹', '✅', '👀']
 
 // ─── Small presentational helpers ────────────────────────────────────────────
 function ThemeToggleContent({ dark }) {
@@ -172,12 +173,157 @@ function MenuItem({ icon, label, onClick, color }) {
   )
 }
 
+// ─── Emoji Picker (fixed-position, outside DOM hover zone) ───────────────────
+function EmojiPicker({ t, onSelect, onClose, anchorRef, onPickerMouseEnter, onPickerMouseLeave }) {
+  const ref = useRef(null)
+  const [pos, setPos] = useState({ top: -9999, left: -9999 })
+
+  useEffect(() => {
+    if (!anchorRef?.current) return
+    const a = anchorRef.current.getBoundingClientRect()
+    // Render at rough position first (above anchor)
+    setPos({ top: Math.max(8, a.top - 52), left: Math.max(8, a.left) })
+    // After paint, measure real picker width and clamp to viewport
+    requestAnimationFrame(() => {
+      if (!ref.current) return
+      const pw = ref.current.offsetWidth
+      const left = Math.min(Math.max(8, a.left), window.innerWidth - pw - 8)
+      setPos({ top: Math.max(8, a.top - 52), left })
+    })
+  }, [anchorRef])
+
+  // Close on outside click (not inside picker)
+  useEffect(() => {
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) onClose()
+    }
+    const tid = setTimeout(() => window.addEventListener('click', handler), 50)
+    return () => { clearTimeout(tid); window.removeEventListener('click', handler) }
+  }, [onClose])
+
+  return (
+    <div
+      ref={ref}
+      onClick={e => e.stopPropagation()}
+      onMouseEnter={onPickerMouseEnter}
+      onMouseLeave={onPickerMouseLeave}
+      style={{
+        position: 'fixed',
+        top: pos.top,
+        left: pos.left,
+        background: t.bg,
+        border: `1px solid ${t.border}`,
+        borderRadius: 12,
+        boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+        zIndex: 9999,
+        padding: '4px 6px',
+        display: 'flex', gap: 0, flexWrap: 'nowrap',
+        overflowX: 'auto', overflowY: 'hidden',
+        maxWidth: 'min(320px, calc(100vw - 16px))',
+        scrollbarWidth: 'none',
+        animation: 'fadeInUp 0.12s ease',
+      }}
+    >
+      {EMOJI_LIST.map(emoji => (
+        <button
+          key={emoji}
+          onClick={() => { onSelect(emoji); onClose() }}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 20, padding: '4px 6px', borderRadius: 8,
+            lineHeight: 1, transition: 'background 0.1s, transform 0.1s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = t.activeRoom; e.currentTarget.style.transform = 'scale(1.2)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.transform = 'scale(1)' }}
+        >
+          {emoji}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ─── Reaction pills ───────────────────────────────────────────────────────────
+function ReactionBar({ reactions, username, messageId, t, onToggle }) {
+  if (!reactions || reactions.length === 0) return null
+
+  // Group by emoji: { '👍': [{ username, ... }, ...], ... }
+  const grouped = reactions.reduce((acc, r) => {
+    if (!acc[r.emoji]) acc[r.emoji] = []
+    acc[r.emoji].push(r)
+    return acc
+  }, {})
+
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+      {Object.entries(grouped).map(([emoji, list]) => {
+        const reacted = list.some(r => r.username === username)
+        const names = list.map(r => r.username).join(', ')
+        return (
+          <button
+            key={emoji}
+            title={names}
+            onClick={() => onToggle(messageId, emoji, reacted)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '2px 8px', borderRadius: 12, fontSize: 13,
+              border: `1.5px solid ${reacted ? t.button : t.border}`,
+              background: reacted ? `${t.button}22` : t.replyBg,
+              color: reacted ? t.button : t.textMuted,
+              cursor: 'pointer', lineHeight: 1.4,
+              transition: 'all 0.15s',
+              fontWeight: reacted ? 600 : 400,
+            }}
+            onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
+            onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+          >
+            <span style={{ fontSize: 14 }}>{emoji}</span>
+            <span style={{ fontSize: 12 }}>{list.length}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Message bubble ───────────────────────────────────────────────────────────
-function MessageBubble({ msg, isSelf, t, isMobile, onReply, onEdit, onDelete }) {
+function MessageBubble({ msg, isSelf, t, isMobile, onReply, onEdit, onDelete, onReact, reactions, username, hasReply }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
   const [editInput, setEditInput] = useState('')
   const [isEditing, setIsEditing] = useState(false)
+  const [hovered, setHovered] = useState(false)
+  const emojiAnchorRef = useRef(null)
+  // Keep picker open even if mouse briefly leaves action bar
+  const hoverLeaveTimer = useRef(null)
 
+  const handleMouseEnter = () => {
+    clearTimeout(hoverLeaveTimer.current)
+    setHovered(true)
+  }
+  const handleMouseLeave = () => {
+    // Grace period — if picker is open, keep alive so user can mouse into it
+    hoverLeaveTimer.current = setTimeout(() => {
+      setEmojiPickerOpen(prev => {
+        if (!prev) setHovered(false)
+        return prev
+      })
+    }, 150)
+  }
+
+  // Called when mouse enters the fixed picker (outside our DOM tree)
+  const handlePickerMouseEnter = () => {
+    clearTimeout(hoverLeaveTimer.current)
+    setHovered(true)
+  }
+
+  // Called when mouse leaves the fixed picker
+  const handlePickerMouseLeave = () => {
+    setEmojiPickerOpen(false)
+    setHovered(false)
+  }
+
+  // Close context menu on outside click
   useEffect(() => {
     if (!menuOpen) return
     const handler = () => setMenuOpen(false)
@@ -257,51 +403,155 @@ function MessageBubble({ msg, isSelf, t, isMobile, onReply, onEdit, onDelete }) 
     ? (isSelf ? '0 4px 14px 14px' : '4px 0 14px 14px')
     : (isSelf ? '14px 4px 14px 14px' : '4px 14px 14px 14px')
 
-  return (
-    <div
-      onClick={isSelf ? (e) => { e.stopPropagation(); setMenuOpen(o => !o) } : undefined}
-      onDoubleClick={!isSelf ? () => onReply(msg) : undefined}
-      style={{
-        background: isSelf ? t.bubbleSelf : t.bubbleOther,
-        color: isSelf ? t.bubbleSelfText : t.bubbleOtherText,
-        borderRadius: bubbleBorderRadius,
-        padding: '9px 14px', fontSize: 14,
-        wordBreak: 'break-word', lineHeight: 1.45,
-        cursor: isSelf ? 'pointer' : 'default',
-        position: 'relative',
-      }}
-    >
-      {msg.content}
+  // Action bar buttons shared style helper
+  const actionBtn = (color = null) => ({
+    background: 'none', border: 'none', cursor: 'pointer',
+    color: color || t.textMuted, padding: '2px 7px', borderRadius: 14,
+    fontSize: 14, display: 'inline-flex', alignItems: 'center',
+    transition: 'background 0.1s',
+  })
 
-      {/* Context menu for own messages */}
-      {menuOpen && (
+  return (
+    <div style={{ position: 'relative', width: '100%' }}>
+      {/* Hover action bar — appears above bubble, inside absolute space */}
+      {hovered && !msg.deleted_at && (
         <div
           onClick={e => e.stopPropagation()}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
           style={{
-            position: 'absolute', top: '110%', right: 0,
+            position: 'absolute',
+            bottom: '100%',
+            marginBottom: 4,
+            [isSelf ? 'right' : 'left']: 0,
+            display: 'flex', gap: 2,
             background: t.bg, border: `1px solid ${t.border}`,
-            borderRadius: 10, boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
-            zIndex: 100, overflow: 'hidden', minWidth: 140,
-            animation: 'fadeIn 0.12s ease',
+            borderRadius: 20, padding: '3px 6px',
+            boxShadow: '0 2px 12px rgba(0,0,0,0.15)',
+            zIndex: 50, animation: 'fadeIn 0.1s ease',
           }}
         >
-          <MenuItem icon={<FiCornerUpLeft size={14} />} label="Reply" color={t.text} onClick={() => { onReply(msg); setMenuOpen(false) }} />
-          <MenuItem icon={<FiEdit2 size={14} />} label="Edit" color={t.text} onClick={startEdit} />
-          <MenuItem icon={<FiTrash2 size={14} />} label="Delete" color="#f87171" onClick={() => { onDelete(msg.id); setMenuOpen(false) }} />
+          {/* Emoji quick-react */}
+          <button
+            ref={emojiAnchorRef}
+            onClick={e => { e.stopPropagation(); setEmojiPickerOpen(o => !o) }}
+            title="React"
+            style={actionBtn()}
+            onMouseEnter={e => e.currentTarget.style.background = t.activeRoom}
+            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+          >
+            <FiSmile size={14} />
+          </button>
+
+          {/* Reply */}
+          <button
+            onClick={e => { e.stopPropagation(); onReply(msg) }}
+            title="Reply"
+            style={actionBtn()}
+            onMouseEnter={e => e.currentTarget.style.background = t.activeRoom}
+            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+          >
+            <FiCornerUpLeft size={14} />
+          </button>
+
+          {/* Edit & Delete — own messages only */}
+          {isSelf && (
+            <>
+              <button
+                onClick={e => { e.stopPropagation(); startEdit() }}
+                title="Edit"
+                style={actionBtn()}
+                onMouseEnter={e => e.currentTarget.style.background = t.activeRoom}
+                onMouseLeave={e => e.currentTarget.style.background = 'none'}
+              >
+                <FiEdit2 size={14} />
+              </button>
+              <button
+                onClick={e => { e.stopPropagation(); onDelete(msg.id) }}
+                title="Delete"
+                style={actionBtn('#f87171')}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(248,113,113,0.1)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'none'}
+              >
+                <FiTrash2 size={14} />
+              </button>
+            </>
+          )}
         </div>
       )}
+
+      {/* Emoji picker — fixed position, rendered outside flow */}
+      {emojiPickerOpen && (
+        <EmojiPicker
+          t={t}
+          anchorRef={emojiAnchorRef}
+          onSelect={emoji => { onReact(msg.id, emoji); setEmojiPickerOpen(false); setHovered(false) }}
+          onClose={() => { setEmojiPickerOpen(false); setHovered(false) }}
+          onPickerMouseEnter={handlePickerMouseEnter}
+          onPickerMouseLeave={handlePickerMouseLeave}
+        />
+      )}
+
+      {/* Bubble */}
+      <div
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        onClick={isSelf ? (e) => { e.stopPropagation(); setMenuOpen(o => !o) } : undefined}
+        onDoubleClick={!isSelf ? () => onReply(msg) : undefined}
+        style={{
+          background: isSelf ? t.bubbleSelf : t.bubbleOther,
+          color: isSelf ? t.bubbleSelfText : t.bubbleOtherText,
+          borderRadius: bubbleBorderRadius,
+          padding: '9px 14px', fontSize: 14,
+          wordBreak: 'break-word', lineHeight: 1.45,
+          cursor: isSelf ? 'pointer' : 'default',
+          position: 'relative',
+        }}
+      >
+        {msg.content}
+
+        {/* Context menu (mobile fallback — tap own bubble) */}
+        {menuOpen && isSelf && (
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              position: 'absolute', top: '110%', right: 0,
+              background: t.bg, border: `1px solid ${t.border}`,
+              borderRadius: 10, boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+              zIndex: 100, overflow: 'hidden', minWidth: 140,
+              animation: 'fadeIn 0.12s ease',
+            }}
+          >
+            <MenuItem icon={<FiSmile size={14} />} label="React" color={t.text} onClick={() => { setMenuOpen(false); setEmojiPickerOpen(true) }} />
+            <MenuItem icon={<FiCornerUpLeft size={14} />} label="Reply" color={t.text} onClick={() => { onReply(msg); setMenuOpen(false) }} />
+            <MenuItem icon={<FiEdit2 size={14} />} label="Edit" color={t.text} onClick={startEdit} />
+            <MenuItem icon={<FiTrash2 size={14} />} label="Delete" color="#f87171" onClick={() => { onDelete(msg.id); setMenuOpen(false) }} />
+          </div>
+        )}
+      </div>
+
+      {/* Reactions */}
+      <ReactionBar
+        reactions={reactions}
+        username={username}
+        messageId={msg.id}
+        t={t}
+        onToggle={onReact}
+      />
     </div>
   )
 }
 
 // ─── Message row ──────────────────────────────────────────────────────────────
-function MessageRow({ msg, prevMsg, nextMsg, username, t, isMobile, onReply, onEdit, onDelete }) {
+function MessageRow({ msg, prevMsg, nextMsg, username, t, isMobile, onReply, onEdit, onDelete, onReact, reactionsMap }) {
   const isSelf = msg.username === username
   const showMeta = !prevMsg || prevMsg.username !== msg.username || msg.reply_to
   const showDateDivider = !prevMsg || new Date(prevMsg.created_at).toDateString() !== new Date(msg.created_at).toDateString()
   const showTime = !nextMsg
     || nextMsg.username !== msg.username
     || (new Date(nextMsg.created_at) - new Date(msg.created_at)) > 5 * 60 * 1000
+
+  const reactions = reactionsMap[msg.id] || []
 
   return (
     <>
@@ -355,10 +605,12 @@ function MessageRow({ msg, prevMsg, nextMsg, username, t, isMobile, onReply, onE
             </div>
           )}
 
-          {/* Bubble */}
+          {/* Bubble + reactions */}
           <MessageBubble
             msg={msg} isSelf={isSelf} t={t} isMobile={isMobile}
             onReply={onReply} onEdit={onEdit} onDelete={onDelete}
+            onReact={onReact} reactions={reactions} username={username}
+            hasReply={!!(msg.reply_to && !msg.deleted_at)}
           />
 
           {/* Timestamp */}
@@ -394,6 +646,8 @@ export default function ChatPage({ session, dark, setDark, t }) {
   const [onlineUsers, setOnlineUsers] = useState([])
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  // reactions: { [messageId]: [{ id, message_id, username, emoji }] }
+  const [reactionsMap, setReactionsMap] = useState({})
 
   const bottomRef = useRef(null)
   const topSentinelRef = useRef(null)
@@ -431,7 +685,11 @@ export default function ChatPage({ session, dark, setDark, t }) {
       const older = data.reverse()
       setMessages(prev => [...older, ...prev])
       setHasMore(data.length === PAGE_SIZE)
-      // Restore scroll position so view doesn't jump
+
+      // Load reactions for newly loaded messages
+      const ids = older.map(m => m.id)
+      fetchReactionsForMessages(ids)
+
       requestAnimationFrame(() => {
         if (el) el.scrollTop = el.scrollHeight - prevScrollHeight
       })
@@ -462,6 +720,42 @@ export default function ChatPage({ session, dark, setDark, t }) {
     setShowScrollBtn(!isAtBottomRef.current)
   }, [])
 
+  // ── Reactions helpers ──────────────────────────────────────────────────────
+  const fetchReactionsForMessages = useCallback(async (messageIds) => {
+    if (!messageIds || messageIds.length === 0) return
+    const { data } = await supabase
+      .from('reactions')
+      .select('*')
+      .in('message_id', messageIds)
+    if (data) {
+      setReactionsMap(prev => {
+        const next = { ...prev }
+        // Reset entries for these ids first
+        messageIds.forEach(id => { next[id] = [] })
+        data.forEach(r => {
+          if (!next[r.message_id]) next[r.message_id] = []
+          next[r.message_id].push(r)
+        })
+        return next
+      })
+    }
+  }, [])
+
+  const applyReactionInsert = useCallback((reaction) => {
+    setReactionsMap(prev => {
+      const list = prev[reaction.message_id] || []
+      // Deduplicate
+      if (list.find(r => r.id === reaction.id)) return prev
+      return { ...prev, [reaction.message_id]: [...list, reaction] }
+    })
+  }, [])
+
+  const applyReactionDelete = useCallback((reaction) => {
+    setReactionsMap(prev => {
+      const list = prev[reaction.message_id] || []
+      return { ...prev, [reaction.message_id]: list.filter(r => r.id !== reaction.id) }
+    })
+  }, [])
 
   // Load messages + realtime + presence
   useEffect(() => {
@@ -471,6 +765,7 @@ export default function ChatPage({ session, dark, setDark, t }) {
     setOnlineUsers([])
     setHasMore(false)
     setLoadingMore(false)
+    setReactionsMap({})
 
     const loadMessages = async () => {
       const { data } = await supabase
@@ -480,6 +775,9 @@ export default function ChatPage({ session, dark, setDark, t }) {
         const sorted = data.reverse()
         setMessages(sorted)
         setHasMore(data.length === PAGE_SIZE)
+        // Load reactions for initial messages
+        const ids = sorted.map(m => m.id)
+        fetchReactionsForMessages(ids)
         setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'instant' }), 50)
       }
     }
@@ -502,6 +800,15 @@ export default function ChatPage({ session, dark, setDark, t }) {
         (payload) => {
           setMessages(prev => prev.map(m => m.id === payload.new.id ? { ...m, ...payload.new } : m))
         }
+      )
+      // Realtime reactions
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'reactions' },
+        (payload) => applyReactionInsert(payload.new)
+      )
+      .on('postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'reactions' },
+        (payload) => applyReactionDelete(payload.old)
       )
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState()
@@ -598,12 +905,44 @@ export default function ChatPage({ session, dark, setDark, t }) {
     await supabase.from('messages').update({ deleted_at }).eq('id', msgId)
   }
 
+  // Toggle reaction: add if not reacted, remove if already reacted
+  const handleReact = useCallback(async (messageId, emoji) => {
+    const existing = (reactionsMap[messageId] || []).find(
+      r => r.username === username && r.emoji === emoji
+    )
+
+    if (existing) {
+      // Optimistic remove
+      setReactionsMap(prev => ({
+        ...prev,
+        [messageId]: (prev[messageId] || []).filter(r => r.id !== existing.id),
+      }))
+      await supabase.from('reactions').delete().eq('id', existing.id)
+    } else {
+      // Optimistic add
+      const optimistic = { id: `opt-${Date.now()}`, message_id: messageId, username, emoji, created_at: new Date().toISOString() }
+      setReactionsMap(prev => ({
+        ...prev,
+        [messageId]: [...(prev[messageId] || []), optimistic],
+      }))
+      const { data } = await supabase.from('reactions').insert({ message_id: messageId, username, emoji }).select().single()
+      if (data) {
+        // Replace optimistic with real
+        setReactionsMap(prev => ({
+          ...prev,
+          [messageId]: (prev[messageId] || []).map(r => r.id === optimistic.id ? data : r),
+        }))
+      }
+    }
+  }, [reactionsMap, username])
+
   const switchRoom = (r) => {
     setUnreadCounts(prev => ({ ...prev, [r]: 0 }))
     setMessages([])
     setTypingUsers([])
     setReplyTo(null)
     setRoom(r)
+    setReactionsMap({})
     isAtBottomRef.current = true
     setShowScrollBtn(false)
     if (isMobile) setSidebarOpen(false)
@@ -691,10 +1030,8 @@ export default function ChatPage({ session, dark, setDark, t }) {
           onScroll={handleScroll}
           style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px' : '16px 20px', display: 'flex', flexDirection: 'column', gap: 2, position: 'relative' }}
         >
-          {/* Top sentinel — IntersectionObserver triggers loadMore when visible */}
           <div ref={topSentinelRef} style={{ height: 1 }} />
 
-          {/* Load more indicator */}
           {loadingMore && (
             <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0' }}>
               <div style={{
@@ -712,7 +1049,6 @@ export default function ChatPage({ session, dark, setDark, t }) {
             </div>
           )}
 
-          {/* Start of history indicator */}
           {!hasMore && messages.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0 16px' }}>
               <div style={{ flex: 1, height: 1, background: t.border }} />
@@ -741,6 +1077,8 @@ export default function ChatPage({ session, dark, setDark, t }) {
               onReply={handleReply}
               onEdit={handleEdit}
               onDelete={handleDelete}
+              onReact={handleReact}
+              reactionsMap={reactionsMap}
             />
           ))}
 
@@ -839,6 +1177,10 @@ export default function ChatPage({ session, dark, setDark, t }) {
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(6px); }
           to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeInUp {
+          from { opacity: 0; transform: translateY(4px) scale(0.96); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
         }
         * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
         input { -webkit-appearance: none; }
