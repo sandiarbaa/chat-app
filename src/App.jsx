@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import { FiMenu, FiMessageCircle, FiMoon, FiSend, FiSmile, FiSun, FiX } from 'react-icons/fi'
 import { supabase } from './supabaseClient'
 
 const ROOMS = ['general', 'random', 'dev', 'design']
@@ -32,7 +33,7 @@ function getInitials(name) {
   return name.slice(0, 2).toUpperCase()
 }
 
-function Avatar({ name, size = 32, t }) {
+function Avatar({ name, size = 32 }) {
   const colors = ['#4f46e5', '#7c3aed', '#db2777', '#0891b2', '#059669', '#d97706']
   const idx = name.charCodeAt(0) % colors.length
   return (
@@ -43,6 +44,71 @@ function Avatar({ name, size = 32, t }) {
       fontSize: size * 0.35, fontWeight: 500, flexShrink: 0, userSelect: 'none'
     }}>
       {getInitials(name)}
+    </div>
+  )
+}
+
+function ThemeToggleContent({ dark }) {
+  return (
+    <>
+      {dark ? <FiSun aria-hidden="true" /> : <FiMoon aria-hidden="true" />}
+      {dark ? 'Light' : 'Dark'}
+    </>
+  )
+}
+
+function SidebarContent({ t, isMobile, setSidebarOpen, switchRoom, room, username, dark, setDark }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: t.sidebar }}>
+      {/* Sidebar header */}
+      <div style={{ padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${t.border}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <FiMessageCircle size={18} color={t.textMuted} aria-hidden="true" />
+          <span style={{ fontWeight: 600, fontSize: 15, color: t.text }}>Chat</span>
+        </div>
+        {isMobile && (
+          <button onClick={() => setSidebarOpen(false)}
+            aria-label="Close sidebar"
+            style={{ background: 'none', border: 'none', color: t.textMuted, cursor: 'pointer', fontSize: 18, padding: 4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+            <FiX aria-hidden="true" />
+          </button>
+        )}
+      </div>
+
+      {/* Channel list */}
+      <div style={{ padding: '12px 8px', flex: 1 }}>
+        <div style={{ fontSize: 11, color: t.textFaint, padding: '0 10px 8px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500 }}>Channels</div>
+        {ROOMS.map(r => (
+          <div key={r} onClick={() => switchRoom(r)}
+            style={{
+              padding: '9px 12px', cursor: 'pointer', borderRadius: 8, marginBottom: 2,
+              fontSize: 14, display: 'flex', alignItems: 'center', gap: 6,
+              background: room === r ? t.activeRoom : 'transparent',
+              color: room === r ? t.activRoomText : t.textMuted,
+              fontWeight: room === r ? 500 : 400,
+            }}>
+            <span style={{ opacity: 0.5, fontSize: 15 }}>#</span> {r}
+          </div>
+        ))}
+      </div>
+
+      {/* User footer */}
+      <div style={{ padding: '12px', borderTop: `1px solid ${t.border}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <Avatar name={username} size={30} />
+          <span style={{ fontSize: 13, color: t.textMuted, fontWeight: 500 }}>{username}</span>
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={() => supabase.auth.signOut()}
+            style={{ flex: 1, padding: '7px', borderRadius: 8, border: `1px solid ${t.border}`, background: 'none', fontSize: 12, cursor: 'pointer', color: t.textMuted }}>
+            Logout
+          </button>
+          <button onClick={() => setDark(!dark)}
+            style={{ flex: 1, padding: '7px', borderRadius: 8, border: `1px solid ${t.border}`, background: 'none', fontSize: 12, cursor: 'pointer', color: t.textMuted, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            <ThemeToggleContent dark={dark} />
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -91,13 +157,13 @@ function AuthPage({ dark, setDark, t }) {
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: t.bg, padding: '0 16px', boxSizing: 'border-box' }}>
       <div style={{ position: 'absolute', top: 16, right: 16 }}>
         <button onClick={() => setDark(!dark)}
-          style={{ padding: '6px 14px', borderRadius: 20, border: `1px solid ${t.border}`, background: 'none', color: t.text, cursor: 'pointer', fontSize: 12 }}>
-          {dark ? '☀️ Light' : '🌙 Dark'}
+          style={{ padding: '6px 14px', borderRadius: 20, border: `1px solid ${t.border}`, background: 'none', color: t.text, cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <ThemeToggleContent dark={dark} />
         </button>
       </div>
       <div style={{ width: '100%', maxWidth: 360, padding: 32, background: t.sidebar, border: `1px solid ${t.border}`, borderRadius: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
-          <div style={{ fontSize: 24 }}>💬</div>
+          <FiMessageCircle size={24} color={t.text} aria-hidden="true" />
           <h2 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: t.text }}>
             {isLogin ? 'Welcome back' : 'Create account'}
           </h2>
@@ -147,8 +213,6 @@ function ChatPage({ session, dark, setDark, t }) {
   }, [])
 
   useEffect(() => {
-    setMessages([])
-    setTypingUsers([])
     const loadMessages = async () => {
       const { data } = await supabase
         .from('messages').select('*').eq('room', room)
@@ -180,7 +244,7 @@ function ChatPage({ session, dark, setDark, t }) {
 
     channelRef.current = channel
     return () => supabase.removeChannel(channel)
-  }, [room])
+  }, [room, username])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -207,6 +271,8 @@ function ChatPage({ session, dark, setDark, t }) {
   }
 
   const switchRoom = (r) => {
+    setMessages([])
+    setTypingUsers([])
     setRoom(r)
     if (isMobile) setSidebarOpen(false)
   }
@@ -217,67 +283,22 @@ function ChatPage({ session, dark, setDark, t }) {
     ? `${typingUsers.join(', ')} are typing...`
     : ''
 
-  const SidebarContent = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: t.sidebar }}>
-      {/* Sidebar header */}
-      <div style={{ padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${t.border}` }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 18 }}>💬</span>
-          <span style={{ fontWeight: 600, fontSize: 15, color: t.text }}>Chat</span>
-        </div>
-        {isMobile && (
-          <button onClick={() => setSidebarOpen(false)}
-            style={{ background: 'none', border: 'none', color: t.textMuted, cursor: 'pointer', fontSize: 18, padding: 4 }}>
-            ✕
-          </button>
-        )}
-      </div>
-
-      {/* Channel list */}
-      <div style={{ padding: '12px 8px', flex: 1 }}>
-        <div style={{ fontSize: 11, color: t.textFaint, padding: '0 10px 8px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500 }}>Channels</div>
-        {ROOMS.map(r => (
-          <div key={r} onClick={() => switchRoom(r)}
-            style={{
-              padding: '9px 12px', cursor: 'pointer', borderRadius: 8, marginBottom: 2,
-              fontSize: 14, display: 'flex', alignItems: 'center', gap: 6,
-              background: room === r ? t.activeRoom : 'transparent',
-              color: room === r ? t.activRoomText : t.textMuted,
-              fontWeight: room === r ? 500 : 400,
-            }}>
-            <span style={{ opacity: 0.5, fontSize: 15 }}>#</span> {r}
-          </div>
-        ))}
-      </div>
-
-      {/* User footer */}
-      <div style={{ padding: '12px', borderTop: `1px solid ${t.border}` }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-          <Avatar name={username} size={30} t={t} />
-          <span style={{ fontSize: 13, color: t.textMuted, fontWeight: 500 }}>{username}</span>
-        </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={() => supabase.auth.signOut()}
-            style={{ flex: 1, padding: '7px', borderRadius: 8, border: `1px solid ${t.border}`, background: 'none', fontSize: 12, cursor: 'pointer', color: t.textMuted }}>
-            Logout
-          </button>
-          <button onClick={() => {}} // dark toggle handled in header
-            style={{ flex: 1, padding: '7px', borderRadius: 8, border: `1px solid ${t.border}`, background: 'none', fontSize: 12, cursor: 'pointer', color: t.textMuted }}
-            onClick={() => setDark(!dark)}>
-            {dark ? '☀️ Light' : '🌙 Dark'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-
   return (
     <div style={{ display: 'flex', height: '100vh', background: t.bg, color: t.text, position: 'relative', overflow: 'hidden' }}>
 
       {/* Desktop sidebar */}
       {!isMobile && (
         <div style={{ width: 220, borderRight: `1px solid ${t.border}`, flexShrink: 0 }}>
-          <SidebarContent />
+          <SidebarContent
+            t={t}
+            isMobile={isMobile}
+            setSidebarOpen={setSidebarOpen}
+            switchRoom={switchRoom}
+            room={room}
+            username={username}
+            dark={dark}
+            setDark={setDark}
+          />
         </div>
       )}
 
@@ -295,7 +316,16 @@ function ChatPage({ session, dark, setDark, t }) {
           transition: 'transform 0.25s ease',
           boxShadow: sidebarOpen ? '8px 0 32px rgba(0,0,0,0.25)' : 'none'
         }}>
-          <SidebarContent />
+          <SidebarContent
+            t={t}
+            isMobile={isMobile}
+            setSidebarOpen={setSidebarOpen}
+            switchRoom={switchRoom}
+            room={room}
+            username={username}
+            dark={dark}
+            setDark={setDark}
+          />
         </div>
       )}
 
@@ -311,8 +341,9 @@ function ChatPage({ session, dark, setDark, t }) {
         }}>
           {isMobile && (
             <button onClick={() => setSidebarOpen(true)}
-              style={{ background: 'none', border: 'none', color: t.textMuted, cursor: 'pointer', fontSize: 22, padding: 0, lineHeight: 1, flexShrink: 0 }}>
-              ☰
+              aria-label="Open sidebar"
+              style={{ background: 'none', border: 'none', color: t.textMuted, cursor: 'pointer', fontSize: 22, padding: 0, lineHeight: 1, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              <FiMenu aria-hidden="true" />
             </button>
           )}
           <span style={{ color: t.textFaint, fontSize: 18, fontWeight: 300 }}>#</span>
@@ -320,8 +351,8 @@ function ChatPage({ session, dark, setDark, t }) {
           {!isMobile && (
             <div style={{ marginLeft: 'auto' }}>
               <button onClick={() => setDark(!dark)}
-                style={{ padding: '5px 12px', borderRadius: 20, border: `1px solid ${t.border}`, background: 'none', color: t.textMuted, cursor: 'pointer', fontSize: 12 }}>
-                {dark ? '☀️ Light' : '🌙 Dark'}
+                style={{ padding: '5px 12px', borderRadius: 20, border: `1px solid ${t.border}`, background: 'none', color: t.textMuted, cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <ThemeToggleContent dark={dark} />
               </button>
             </div>
           )}
@@ -330,8 +361,8 @@ function ChatPage({ session, dark, setDark, t }) {
         {/* Messages */}
         <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px' : '16px 20px', display: 'flex', flexDirection: 'column', gap: 2 }}>
           {messages.length === 0 && (
-            <div style={{ color: t.textFaint, fontSize: 14, textAlign: 'center', marginTop: 60 }}>
-              Belum ada pesan di #{room} 👋
+            <div style={{ color: t.textFaint, fontSize: 14, textAlign: 'center', marginTop: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              Belum ada pesan di #{room} <FiSmile aria-hidden="true" />
             </div>
           )}
 
@@ -345,7 +376,7 @@ function ChatPage({ session, dark, setDark, t }) {
                 {/* Show avatar + name only for first consecutive msg */}
                 {showMeta && !isSelf && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <Avatar name={msg.username} size={22} t={t} />
+                    <Avatar name={msg.username} size={22} />
                     <span style={{ fontSize: 12, color: t.textMuted, fontWeight: 500 }}>{msg.username}</span>
                   </div>
                 )}
@@ -404,7 +435,7 @@ function ChatPage({ session, dark, setDark, t }) {
               cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
               flexShrink: 0,
             }}>
-            ➤
+            <FiSend aria-hidden="true" />
           </button>
         </div>
       </div>
