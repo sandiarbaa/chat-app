@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from 'react'
-import { FiMenu, FiMessageCircle, FiMoon, FiSend, FiSmile, FiSun, FiX } from 'react-icons/fi'
+import { useEffect, useState, useRef, useCallback } from 'react'
+import { FiMenu, FiMessageCircle, FiMoon, FiSend, FiSmile, FiSun, FiX, FiChevronDown } from 'react-icons/fi'
 import { supabase } from './supabaseClient'
 
 const ROOMS = ['general', 'random', 'dev', 'design']
@@ -15,6 +15,8 @@ const theme = {
     overlay: 'rgba(0,0,0,0.3)',
     avatarBg: '#e0e0e0', avatarText: '#555555',
     headerBg: '#ffffff',
+    badgeBg: '#ef4444', badgeText: '#ffffff',
+    scrollBtnBg: '#111111', scrollBtnText: '#ffffff',
   },
   dark: {
     bg: '#131318', sidebar: '#0e0e13', border: '#2a2a35',
@@ -26,6 +28,8 @@ const theme = {
     overlay: 'rgba(0,0,0,0.6)',
     avatarBg: '#2a2a3a', avatarText: '#8888cc',
     headerBg: '#0e0e13',
+    badgeBg: '#ef4444', badgeText: '#ffffff',
+    scrollBtnBg: '#4f46e5', scrollBtnText: '#ffffff',
   }
 }
 
@@ -48,6 +52,32 @@ function Avatar({ name, size = 32 }) {
   )
 }
 
+function formatTime(isoString) {
+  const date = new Date(isoString)
+  const now = new Date()
+  const isToday = date.toDateString() === now.toDateString()
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  const isYesterday = date.toDateString() === yesterday.toDateString()
+
+  const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  if (isToday) return timeStr
+  if (isYesterday) return `Yesterday ${timeStr}`
+  return date.toLocaleDateString([], { day: 'numeric', month: 'short' }) + ' ' + timeStr
+}
+
+function formatDateDivider(isoString) {
+  const date = new Date(isoString)
+  const now = new Date()
+  const isToday = date.toDateString() === now.toDateString()
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  const isYesterday = date.toDateString() === yesterday.toDateString()
+  if (isToday) return 'Today'
+  if (isYesterday) return 'Yesterday'
+  return date.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })
+}
+
 function ThemeToggleContent({ dark }) {
   return (
     <>
@@ -57,42 +87,51 @@ function ThemeToggleContent({ dark }) {
   )
 }
 
-function SidebarContent({ t, isMobile, setSidebarOpen, switchRoom, room, username, dark, setDark }) {
+function SidebarContent({ t, isMobile, setSidebarOpen, switchRoom, room, username, dark, setDark, unreadCounts }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: t.sidebar }}>
-      {/* Sidebar header */}
       <div style={{ padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${t.border}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <FiMessageCircle size={18} color={t.textMuted} aria-hidden="true" />
           <span style={{ fontWeight: 600, fontSize: 15, color: t.text }}>Chat</span>
         </div>
         {isMobile && (
-          <button onClick={() => setSidebarOpen(false)}
-            aria-label="Close sidebar"
+          <button onClick={() => setSidebarOpen(false)} aria-label="Close sidebar"
             style={{ background: 'none', border: 'none', color: t.textMuted, cursor: 'pointer', fontSize: 18, padding: 4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
             <FiX aria-hidden="true" />
           </button>
         )}
       </div>
 
-      {/* Channel list */}
       <div style={{ padding: '12px 8px', flex: 1 }}>
         <div style={{ fontSize: 11, color: t.textFaint, padding: '0 10px 8px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500 }}>Channels</div>
-        {ROOMS.map(r => (
-          <div key={r} onClick={() => switchRoom(r)}
-            style={{
-              padding: '9px 12px', cursor: 'pointer', borderRadius: 8, marginBottom: 2,
-              fontSize: 14, display: 'flex', alignItems: 'center', gap: 6,
-              background: room === r ? t.activeRoom : 'transparent',
-              color: room === r ? t.activRoomText : t.textMuted,
-              fontWeight: room === r ? 500 : 400,
-            }}>
-            <span style={{ opacity: 0.5, fontSize: 15 }}>#</span> {r}
-          </div>
-        ))}
+        {ROOMS.map(r => {
+          const count = unreadCounts[r] || 0
+          return (
+            <div key={r} onClick={() => switchRoom(r)}
+              style={{
+                padding: '9px 12px', cursor: 'pointer', borderRadius: 8, marginBottom: 2,
+                fontSize: 14, display: 'flex', alignItems: 'center', gap: 6,
+                background: room === r ? t.activeRoom : 'transparent',
+                color: room === r ? t.activRoomText : t.textMuted,
+                fontWeight: room === r || count > 0 ? 500 : 400,
+              }}>
+              <span style={{ opacity: 0.5, fontSize: 15 }}>#</span>
+              <span style={{ flex: 1 }}>{r}</span>
+              {count > 0 && room !== r && (
+                <span style={{
+                  background: t.badgeBg, color: t.badgeText,
+                  borderRadius: 10, fontSize: 11, fontWeight: 600,
+                  padding: '1px 6px', minWidth: 18, textAlign: 'center'
+                }}>
+                  {count > 99 ? '99+' : count}
+                </span>
+              )}
+            </div>
+          )
+        })}
       </div>
 
-      {/* User footer */}
       <div style={{ padding: '12px', borderTop: `1px solid ${t.border}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
           <Avatar name={username} size={30} />
@@ -201,9 +240,13 @@ function ChatPage({ session, dark, setDark, t }) {
   const [typingUsers, setTypingUsers] = useState([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640)
+  const [showScrollBtn, setShowScrollBtn] = useState(false)
+  const [unreadCounts, setUnreadCounts] = useState({})
   const bottomRef = useRef(null)
+  const scrollContainerRef = useRef(null)
   const channelRef = useRef(null)
   const typingTimeoutRef = useRef(null)
+  const isAtBottomRef = useRef(true)
   const username = session.user.email.split('@')[0]
 
   useEffect(() => {
@@ -212,12 +255,29 @@ function ChatPage({ session, dark, setDark, t }) {
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
+  // Track scroll position to show/hide scroll button
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    const atBottom = distFromBottom < 80
+    isAtBottomRef.current = atBottom
+    setShowScrollBtn(!atBottom)
+  }, [])
+
   useEffect(() => {
+    setMessages([])
+    setTypingUsers([])
+
     const loadMessages = async () => {
       const { data } = await supabase
         .from('messages').select('*').eq('room', room)
         .order('created_at', { ascending: true }).limit(50)
-      if (data) setMessages(data)
+      if (data) {
+        setMessages(data)
+        // Scroll to bottom after load
+        setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'instant' }), 50)
+      }
     }
     loadMessages()
 
@@ -226,7 +286,9 @@ function ChatPage({ session, dark, setDark, t }) {
     channel
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages', filter: `room=eq.${room}` },
-        (payload) => setMessages(prev => [...prev, payload.new])
+        (payload) => {
+          setMessages(prev => [...prev, payload.new])
+        }
       )
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState()
@@ -244,11 +306,37 @@ function ChatPage({ session, dark, setDark, t }) {
 
     channelRef.current = channel
     return () => supabase.removeChannel(channel)
-  }, [room, username])
+  }, [room])
 
+  // Listen to ALL rooms for unread badges
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const otherRooms = ROOMS.filter(r => r !== room)
+    const subs = otherRooms.map(r => {
+      const ch = supabase.channel(`unread:${r}`)
+      ch.on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: `room=eq.${r}` },
+        (payload) => {
+          if (payload.new.username !== username) {
+            setUnreadCounts(prev => ({ ...prev, [r]: (prev[r] || 0) + 1 }))
+          }
+        }
+      ).subscribe()
+      return ch
+    })
+    return () => subs.forEach(ch => supabase.removeChannel(ch))
+  }, [room])
+
+  // Auto-scroll only when user is at bottom
+  useEffect(() => {
+    if (isAtBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [messages, typingUsers])
+
+  const scrollToBottom = () => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    setShowScrollBtn(false)
+  }
 
   const handleInputChange = (e) => {
     setInput(e.target.value)
@@ -267,13 +355,19 @@ function ChatPage({ session, dark, setDark, t }) {
     clearTimeout(typingTimeoutRef.current)
     channelRef.current?.track({ username, isTyping: false })
     setMessages(prev => [...prev, { id: Date.now(), username, content, room, created_at: new Date().toISOString() }])
+    // Force scroll to bottom on own message
+    isAtBottomRef.current = true
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 30)
     await supabase.from('messages').insert({ username, content, room })
   }
 
   const switchRoom = (r) => {
+    setUnreadCounts(prev => ({ ...prev, [r]: 0 }))
     setMessages([])
     setTypingUsers([])
     setRoom(r)
+    isAtBottomRef.current = true
+    setShowScrollBtn(false)
     if (isMobile) setSidebarOpen(false)
   }
 
@@ -283,32 +377,25 @@ function ChatPage({ session, dark, setDark, t }) {
     ? `${typingUsers.join(', ')} are typing...`
     : ''
 
+  // Group messages by date for dividers
+  const getDateKey = (iso) => new Date(iso).toDateString()
+
   return (
     <div style={{ display: 'flex', height: '100vh', background: t.bg, color: t.text, position: 'relative', overflow: 'hidden' }}>
 
-      {/* Desktop sidebar */}
       {!isMobile && (
         <div style={{ width: 220, borderRight: `1px solid ${t.border}`, flexShrink: 0 }}>
-          <SidebarContent
-            t={t}
-            isMobile={isMobile}
-            setSidebarOpen={setSidebarOpen}
-            switchRoom={switchRoom}
-            room={room}
-            username={username}
-            dark={dark}
-            setDark={setDark}
-          />
+          <SidebarContent t={t} isMobile={isMobile} setSidebarOpen={setSidebarOpen}
+            switchRoom={switchRoom} room={room} username={username}
+            dark={dark} setDark={setDark} unreadCounts={unreadCounts} />
         </div>
       )}
 
-      {/* Mobile overlay */}
       {isMobile && sidebarOpen && (
         <div onClick={() => setSidebarOpen(false)}
           style={{ position: 'fixed', inset: 0, background: t.overlay, zIndex: 10 }} />
       )}
 
-      {/* Mobile drawer */}
       {isMobile && (
         <div style={{
           position: 'fixed', top: 0, left: 0, bottom: 0, width: 260, zIndex: 20,
@@ -316,20 +403,12 @@ function ChatPage({ session, dark, setDark, t }) {
           transition: 'transform 0.25s ease',
           boxShadow: sidebarOpen ? '8px 0 32px rgba(0,0,0,0.25)' : 'none'
         }}>
-          <SidebarContent
-            t={t}
-            isMobile={isMobile}
-            setSidebarOpen={setSidebarOpen}
-            switchRoom={switchRoom}
-            room={room}
-            username={username}
-            dark={dark}
-            setDark={setDark}
-          />
+          <SidebarContent t={t} isMobile={isMobile} setSidebarOpen={setSidebarOpen}
+            switchRoom={switchRoom} room={room} username={username}
+            dark={dark} setDark={setDark} unreadCounts={unreadCounts} />
         </div>
       )}
 
-      {/* Chat area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
 
         {/* Header */}
@@ -340,9 +419,8 @@ function ChatPage({ session, dark, setDark, t }) {
           display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0
         }}>
           {isMobile && (
-            <button onClick={() => setSidebarOpen(true)}
-              aria-label="Open sidebar"
-              style={{ background: 'none', border: 'none', color: t.textMuted, cursor: 'pointer', fontSize: 22, padding: 0, lineHeight: 1, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button onClick={() => setSidebarOpen(true)} aria-label="Open sidebar"
+              style={{ background: 'none', border: 'none', color: t.textMuted, cursor: 'pointer', fontSize: 22, padding: 0, lineHeight: 1, flexShrink: 0, display: 'inline-flex', alignItems: 'center' }}>
               <FiMenu aria-hidden="true" />
             </button>
           )}
@@ -359,7 +437,11 @@ function ChatPage({ session, dark, setDark, t }) {
         </div>
 
         {/* Messages */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px' : '16px 20px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px' : '16px 20px', display: 'flex', flexDirection: 'column', gap: 2, position: 'relative' }}>
+
           {messages.length === 0 && (
             <div style={{ color: t.textFaint, fontSize: 14, textAlign: 'center', marginTop: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
               Belum ada pesan di #{room} <FiSmile aria-hidden="true" />
@@ -370,37 +452,61 @@ function ChatPage({ session, dark, setDark, t }) {
             const isSelf = msg.username === username
             const prevMsg = messages[i - 1]
             const showMeta = !prevMsg || prevMsg.username !== msg.username
+            const showDateDivider = !prevMsg || getDateKey(prevMsg.created_at) !== getDateKey(msg.created_at)
+
+            // Show timestamp if: last message, or next message is from different user, or >5 min gap
+            const nextMsg = messages[i + 1]
+            const showTime = !nextMsg
+              || nextMsg.username !== msg.username
+              || (new Date(nextMsg.created_at) - new Date(msg.created_at)) > 5 * 60 * 1000
 
             return (
-              <div key={msg.id} style={{ alignSelf: isSelf ? 'flex-end' : 'flex-start', maxWidth: isMobile ? '82%' : '65%', marginTop: showMeta ? 10 : 2 }}>
-                {/* Show avatar + name only for first consecutive msg */}
-                {showMeta && !isSelf && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <Avatar name={msg.username} size={22} />
-                    <span style={{ fontSize: 12, color: t.textMuted, fontWeight: 500 }}>{msg.username}</span>
+              <div key={msg.id}>
+                {/* Date divider */}
+                {showDateDivider && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '16px 0 12px' }}>
+                    <div style={{ flex: 1, height: 1, background: t.border }} />
+                    <span style={{ fontSize: 11, color: t.textFaint, fontWeight: 500, whiteSpace: 'nowrap', padding: '2px 8px', border: `1px solid ${t.border}`, borderRadius: 10 }}>
+                      {formatDateDivider(msg.created_at)}
+                    </span>
+                    <div style={{ flex: 1, height: 1, background: t.border }} />
                   </div>
                 )}
-                {showMeta && isSelf && (
-                  <div style={{ textAlign: 'right', marginBottom: 4 }}>
-                    <span style={{ fontSize: 12, color: t.textMuted, fontWeight: 500 }}>{msg.username}</span>
+
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: isSelf ? 'flex-end' : 'flex-start', width: 'fit-content', maxWidth: isMobile ? '82%' : '65%', marginTop: showMeta && !showDateDivider ? 10 : 2, marginLeft: isSelf ? 'auto' : 0 }}>
+                  {showMeta && !isSelf && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <Avatar name={msg.username} size={22} />
+                      <span style={{ fontSize: 12, color: t.textMuted, fontWeight: 500 }}>{msg.username}</span>
+                    </div>
+                  )}
+                  {showMeta && isSelf && (
+                    <div style={{ textAlign: 'right', marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, color: t.textMuted, fontWeight: 500 }}>{msg.username}</span>
+                    </div>
+                  )}
+                  <div style={{
+                    background: isSelf ? t.bubbleSelf : t.bubbleOther,
+                    color: isSelf ? t.bubbleSelfText : t.bubbleOtherText,
+                    borderRadius: isSelf ? '14px 4px 14px 14px' : '4px 14px 14px 14px',
+                    padding: '9px 14px', fontSize: 14, wordBreak: 'break-word', lineHeight: 1.45,
+                  }}>
+                    {msg.content}
                   </div>
-                )}
-                <div style={{
-                  background: isSelf ? t.bubbleSelf : t.bubbleOther,
-                  color: isSelf ? t.bubbleSelfText : t.bubbleOtherText,
-                  borderRadius: isSelf ? '14px 4px 14px 14px' : '4px 14px 14px 14px',
-                  padding: '9px 14px', fontSize: 14, wordBreak: 'break-word', lineHeight: 1.45,
-                }}>
-                  {msg.content}
+                  {/* Timestamp */}
+                  {showTime && (
+                    <div style={{ fontSize: 11, color: t.textFaint, marginTop: 3, textAlign: isSelf ? 'right' : 'left', paddingLeft: isSelf ? 0 : 4, paddingRight: isSelf ? 4 : 0 }}>
+                      {formatTime(msg.created_at)}
+                    </div>
+                  )}
                 </div>
               </div>
             )
           })}
 
-          {/* Typing indicator */}
           {typingText && (
-            <div style={{ alignSelf: 'flex-start', marginTop: 8 }}>
-              <div style={{ background: t.bubbleOther, borderRadius: '4px 14px 14px 14px', padding: '9px 14px', fontSize: 13, color: t.textMuted, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ marginTop: 8, marginLeft: 0 }}>
+              <div style={{ background: t.bubbleOther, borderRadius: '4px 14px 14px 14px', padding: '9px 14px', fontSize: 13, color: t.textMuted, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
                   {[0, 1, 2].map(i => (
                     <span key={i} style={{ width: 5, height: 5, borderRadius: '50%', background: t.textMuted, display: 'inline-block', animation: 'bounce 1s infinite', animationDelay: `${i * 0.2}s` }} />
@@ -413,6 +519,29 @@ function ChatPage({ session, dark, setDark, t }) {
           <div ref={bottomRef} />
         </div>
 
+        {/* Scroll to bottom button */}
+        {showScrollBtn && (
+          <button
+            onClick={scrollToBottom}
+            aria-label="Scroll to latest"
+            style={{
+              position: 'absolute',
+              bottom: isMobile ? 74 : 80,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: 'auto', height: 34, borderRadius: 20, padding: '0 14px',
+              background: t.scrollBtnBg, color: t.scrollBtnText,
+              border: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 2px 12px rgba(0,0,0,0.25)',
+              zIndex: 5, fontSize: 18,
+              animation: 'fadeIn 0.15s ease',
+            }}>
+            <FiChevronDown aria-hidden="true" />
+            <span style={{ fontSize: 12, fontWeight: 500, marginLeft: 4 }}>Terbaru</span>
+          </button>
+        )}
+
         {/* Input bar */}
         <div style={{ padding: isMobile ? '10px 12px' : '12px 20px', borderTop: `1px solid ${t.border}`, display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0, background: t.bg }}>
           <input
@@ -421,8 +550,7 @@ function ChatPage({ session, dark, setDark, t }) {
             onKeyDown={e => e.key === 'Enter' && sendMessage()}
             placeholder={`Pesan di #${room}...`}
             style={{
-              flex: 1, padding: '11px 16px',
-              borderRadius: 24,
+              flex: 1, padding: '11px 16px', borderRadius: 24,
               border: `1px solid ${t.border}`,
               fontSize: 14, color: t.text, background: t.input,
               outline: 'none', minWidth: 0,
@@ -444,6 +572,10 @@ function ChatPage({ session, dark, setDark, t }) {
         @keyframes bounce {
           0%, 60%, 100% { transform: translateY(0); }
           30% { transform: translateY(-4px); }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
         }
         * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
         input { -webkit-appearance: none; }
