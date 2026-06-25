@@ -49,7 +49,7 @@ function ToggleButton({ dark, setDark, t }) {
   return (
     <button onClick={() => setDark(!dark)}
       style={{ padding: '6px 12px', borderRadius: 20, border: `1px solid ${t.border}`, background: 'none', color: t.text, cursor: 'pointer', fontSize: 12 }}>
-      {dark ? '☀️ Light' : '🌙 Dark'}
+      {dark ? 'Light' : 'Dark'}
     </button>
   )
 }
@@ -117,10 +117,9 @@ function ChatPage({ session, dark, setDark, t }) {
   const username = session.user.email.split('@')[0]
 
   useEffect(() => {
-    setMessages([])
-    setTypingUsers([])
-
     const loadMessages = async () => {
+      setMessages([])
+      setTypingUsers([])
       const { data } = await supabase
         .from('messages')
         .select('*')
@@ -142,16 +141,17 @@ function ChatPage({ session, dark, setDark, t }) {
       )
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState()
-        const typing = Object.entries(state)
-          .filter(([key, val]) => key !== username && val[0]?.isTyping)
-          .map(([key]) => key)
+        const typing = Object.values(state)
+          .flat()
+          .filter(p => p.username !== username && p.isTyping)
+          .map(p => p.username)
         setTypingUsers(typing)
       })
       .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await channel.track({ isTyping: false })
-        }
-      })
+  if (status === 'SUBSCRIBED') {
+    await channel.track({ username, isTyping: false })
+  }
+})
 
     channelRef.current = channel
 
@@ -162,24 +162,35 @@ function ChatPage({ session, dark, setDark, t }) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, typingUsers])
 
-  const handleInputChange = async (e) => {
+  const handleInputChange = (e) => {
     setInput(e.target.value)
-    if (channelRef.current) {
-      await channelRef.current.track({ isTyping: true })
-      clearTimeout(typingTimeoutRef.current)
-      typingTimeoutRef.current = setTimeout(async () => {
-        await channelRef.current.track({ isTyping: false })
-      }, 1500)
-    }
+    if (!channelRef.current) return
+
+    channelRef.current.track({ isTyping: true })
+    clearTimeout(typingTimeoutRef.current)
+    typingTimeoutRef.current = setTimeout(() => {
+      channelRef.current?.track({ isTyping: false })
+    }, 1500)
   }
 
   const sendMessage = async () => {
-    if (!input.trim()) return
-    if (channelRef.current) await channelRef.current.track({ isTyping: false })
-    clearTimeout(typingTimeoutRef.current)
-    await supabase.from('messages').insert({ username, content: input.trim(), room })
-    setInput('')
+  if (!input.trim()) return
+  const content = input.trim()
+  setInput('')
+  clearTimeout(typingTimeoutRef.current)
+  channelRef.current?.track({ isTyping: false })
+  
+  const optimistic = {
+    id: Date.now(),
+    username,
+    content,
+    room,
+    created_at: new Date().toISOString()
   }
+  setMessages(prev => [...prev, optimistic])
+  
+  await supabase.from('messages').insert({ username, content, room })
+}
 
   const typingText = typingUsers.length === 1
     ? `${typingUsers[0]} is typing...`
