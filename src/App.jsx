@@ -3,6 +3,25 @@ import { supabase } from './supabaseClient'
 
 const ROOMS = ['general', 'random', 'dev', 'design']
 
+const theme = {
+  light: {
+    bg: '#ffffff', sidebar: '#f7f7f7', border: '#e0e0e0',
+    text: '#111111', textMuted: '#666666', textFaint: '#999999',
+    input: '#ffffff', activeRoom: '#e8e8e8',
+    bubbleSelf: '#111111', bubbleSelfText: '#ffffff',
+    bubbleOther: '#f0f0f0', bubbleOtherText: '#111111',
+    button: '#111111', buttonText: '#ffffff',
+  },
+  dark: {
+    bg: '#1a1a1a', sidebar: '#111111', border: '#2e2e2e',
+    text: '#f0f0f0', textMuted: '#aaaaaa', textFaint: '#555555',
+    input: '#2a2a2a', activeRoom: '#2e2e2e',
+    bubbleSelf: '#4f46e5', bubbleSelfText: '#ffffff',
+    bubbleOther: '#2a2a2a', bubbleOtherText: '#f0f0f0',
+    button: '#4f46e5', buttonText: '#ffffff',
+  }
+}
+
 export default function App() {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -26,39 +45,13 @@ export default function App() {
   return <ChatPage session={session} dark={dark} setDark={setDark} t={t} />
 }
 
-const theme = {
-  light: {
-    bg: '#ffffff',
-    sidebar: '#f7f7f7',
-    border: '#e0e0e0',
-    text: '#111111',
-    textMuted: '#666666',
-    textFaint: '#999999',
-    input: '#ffffff',
-    activeRoom: '#e8e8e8',
-    bubbleSelf: '#111111',
-    bubbleSelfText: '#ffffff',
-    bubbleOther: '#f0f0f0',
-    bubbleOtherText: '#111111',
-    button: '#111111',
-    buttonText: '#ffffff',
-  },
-  dark: {
-    bg: '#1a1a1a',
-    sidebar: '#111111',
-    border: '#2e2e2e',
-    text: '#f0f0f0',
-    textMuted: '#aaaaaa',
-    textFaint: '#666666',
-    input: '#2a2a2a',
-    activeRoom: '#2e2e2e',
-    bubbleSelf: '#4f46e5',
-    bubbleSelfText: '#ffffff',
-    bubbleOther: '#2a2a2a',
-    bubbleOtherText: '#f0f0f0',
-    button: '#4f46e5',
-    buttonText: '#ffffff',
-  }
+function ToggleButton({ dark, setDark, t }) {
+  return (
+    <button onClick={() => setDark(!dark)}
+      style={{ padding: '6px 12px', borderRadius: 20, border: `1px solid ${t.border}`, background: 'none', color: t.text, cursor: 'pointer', fontSize: 12 }}>
+      {dark ? '☀️ Light' : '🌙 Dark'}
+    </button>
+  )
 }
 
 function AuthPage({ dark, setDark, t }) {
@@ -113,24 +106,20 @@ function AuthPage({ dark, setDark, t }) {
   )
 }
 
-function ToggleButton({ dark, setDark, t }) {
-  return (
-    <button onClick={() => setDark(!dark)}
-      style={{ padding: '6px 12px', borderRadius: 20, border: `1px solid ${t.border}`, background: t.sidebar, color: t.text, cursor: 'pointer', fontSize: 13 }}>
-      {dark ? '☀️ Light' : '🌙 Dark'}
-    </button>
-  )
-}
-
 function ChatPage({ session, dark, setDark, t }) {
   const [room, setRoom] = useState('general')
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
+  const [typingUsers, setTypingUsers] = useState([])
   const bottomRef = useRef(null)
+  const channelRef = useRef(null)
+  const typingTimeoutRef = useRef(null)
   const username = session.user.email.split('@')[0]
 
   useEffect(() => {
     setMessages([])
+    setTypingUsers([])
+
     const loadMessages = async () => {
       const { data } = await supabase
         .from('messages')
@@ -142,26 +131,61 @@ function ChatPage({ session, dark, setDark, t }) {
     }
     loadMessages()
 
-    const channel = supabase
-      .channel(`room:${room}`)
+    const channel = supabase.channel(`room:${room}`, {
+      config: { presence: { key: username } }
+    })
+
+    channel
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages', filter: `room=eq.${room}` },
         (payload) => setMessages(prev => [...prev, payload.new])
       )
-      .subscribe()
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState()
+        const typing = Object.entries(state)
+          .filter(([key, val]) => key !== username && val[0]?.isTyping)
+          .map(([key]) => key)
+        setTypingUsers(typing)
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({ isTyping: false })
+        }
+      })
+
+    channelRef.current = channel
 
     return () => supabase.removeChannel(channel)
   }, [room])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, typingUsers])
+
+  const handleInputChange = async (e) => {
+    setInput(e.target.value)
+    if (channelRef.current) {
+      await channelRef.current.track({ isTyping: true })
+      clearTimeout(typingTimeoutRef.current)
+      typingTimeoutRef.current = setTimeout(async () => {
+        await channelRef.current.track({ isTyping: false })
+      }, 1500)
+    }
+  }
 
   const sendMessage = async () => {
     if (!input.trim()) return
+    if (channelRef.current) await channelRef.current.track({ isTyping: false })
+    clearTimeout(typingTimeoutRef.current)
     await supabase.from('messages').insert({ username, content: input.trim(), room })
     setInput('')
   }
+
+  const typingText = typingUsers.length === 1
+    ? `${typingUsers[0]} is typing...`
+    : typingUsers.length > 1
+    ? `${typingUsers.join(', ')} are typing...`
+    : ''
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: t.bg, color: t.text }}>
@@ -189,7 +213,7 @@ function ChatPage({ session, dark, setDark, t }) {
       </div>
 
       {/* Chat area */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: t.bg }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '14px 20px', borderBottom: `1px solid ${t.border}`, fontWeight: 500, fontSize: 15, color: t.text }}>
           # {room}
         </div>
@@ -207,10 +231,26 @@ function ChatPage({ session, dark, setDark, t }) {
               </div>
             </div>
           ))}
+          {/* Typing indicator */}
+          {typingText && (
+            <div style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ background: t.bubbleOther, borderRadius: 12, padding: '8px 14px', fontSize: 13, color: t.textMuted, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ display: 'flex', gap: 3 }}>
+                  {[0, 1, 2].map(i => (
+                    <span key={i} style={{
+                      width: 6, height: 6, borderRadius: '50%', background: t.textMuted, display: 'inline-block',
+                      animation: 'bounce 1s infinite', animationDelay: `${i * 0.2}s`
+                    }} />
+                  ))}
+                </span>
+                {typingText}
+              </div>
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
         <div style={{ padding: '12px 20px', borderTop: `1px solid ${t.border}`, display: 'flex', gap: 8 }}>
-          <input value={input} onChange={e => setInput(e.target.value)}
+          <input value={input} onChange={handleInputChange}
             onKeyDown={e => e.key === 'Enter' && sendMessage()}
             placeholder={`Pesan di #${room}...`}
             style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 14, color: t.text, background: t.input }}
@@ -221,6 +261,13 @@ function ChatPage({ session, dark, setDark, t }) {
           </button>
         </div>
       </div>
+
+      <style>{`
+        @keyframes bounce {
+          0%, 60%, 100% { transform: translateY(0); }
+          30% { transform: translateY(-4px); }
+        }
+      `}</style>
     </div>
   )
 }
